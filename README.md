@@ -17,6 +17,52 @@ time, estimated remaining time, and a separate progress bar for every output.
 
 `Render video` creates a local render job and invokes the C++ engine. The engine isolates the dominant person, applies a configurable outline, composites it over the background, loops a shorter background when needed, and preserves the reference video's audio.
 
+## Projects
+
+`+ Add project` (above the quick-render form) creates a reusable project:
+
+- **Reference videos folder** and **Background videos folder** — choose whole
+  folders. Every video file inside (MOV, MP4, M4V, AVI, MKV, WEBM, including
+  subfolders) is uploaded once and kept on the server; hidden, empty and
+  non-video files are skipped. Choosing a folder again while editing replaces
+  that side's videos.
+- **Videos to generate** — how many outputs one `Generate` run creates (1–100).
+  The count can also be changed on the project card just before generating.
+- **Composition settings** — every setting is a *from–to* range instead of a
+  single value. Each generated video gets its own random outline width, person
+  scale, left and bottom margin inside those ranges, and an outline colour
+  between the two chosen colours. Set both ends equal for a fixed value.
+- **Google Drive folder link** — optional; see below.
+
+Each generated video takes a random reference video and a random background
+video. Every video in a folder is used once before any of them repeats, and a
+reference/background pair is not repeated while unused pairs remain. The
+chosen files and values are shown on every render in *My renders*. Up to five
+renders run at a time; the rest wait in the queue.
+
+## Saving to Google Drive
+
+A project with a Google Drive folder link uploads each finished video into that
+folder (links such as `https://drive.google.com/drive/folders/…`, *My Drive*
+and shared drives work). Finished videos also stay downloadable from *My renders*.
+
+1. Google sign-in must be configured (see below). In the same Google Cloud
+   project, enable the **Google Drive API** and add the
+   `https://www.googleapis.com/auth/drive` scope to the OAuth consent screen.
+   No additional redirect URI is needed.
+2. After signing in, choose **Connect Google Drive** and allow Drive access.
+   The folder must be one that account can add files to.
+
+The Drive scope is a restricted Google scope. While the OAuth app is in
+*Testing* mode only its listed test users can connect, and Google expires their
+Drive access after 7 days — the app then asks to connect again. An internal
+Google Workspace app, or a published app (Google reviews apps that use
+restricted scopes), avoids the weekly reconnect.
+
+Uploads that fail (for example after access was revoked) show the reason and a
+**Retry upload** button. An upload interrupted by a network error or a server
+restart continues from where it stopped.
+
 ## Run the web app
 
 Build the native render engine first, then start the local web entry point:
@@ -59,7 +105,10 @@ server, use HTTPS and the matching HTTPS URL.
 Uploads require a Google sign-in. Each render is permanently associated with
 the signed-in Google account, so its render history and downloads are shown
 only to that account, including after restarting the app. Google access tokens
-are used only during sign-in and are never stored.
+from sign-in are used only during sign-in and are never stored. Only when a
+user connects Google Drive does the app keep that user's Drive refresh token,
+AES-GCM encrypted with a key derived from the session secret, so uploads can
+run in the background; **Disconnect Drive** deletes it and revokes it at Google.
 
 If Google OAuth credentials are not configured, the upload page offers a local
 browser-session mode instead, so the app remains usable without `.env` setup.
