@@ -4,7 +4,11 @@ import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.InputStream
+import java.io.OutputStream
+import java.net.Inet6Address
 import java.net.URI
 import java.net.URLEncoder
 import java.net.InetSocketAddress
@@ -121,6 +125,12 @@ fun main() {
         )
         try {
             when {
+                // The dashboard has no login of its own: only this machine or a reverse proxy on its
+                // private network (which must add authentication, see deploy/) may reach it.
+                (path == "/admin" || path.startsWith("/api/admin/")) && !fromPrivateNetwork(exchange) -> {
+                    ActivityLog.warn("admin.public_rejected", "Admin request from a public address refused", requestContext(exchange))
+                    respondText(exchange, 403, "The admin dashboard is only reachable from this server's network.")
+                }
                 exchange.requestMethod == "GET" && path == "/" -> respondHtml(exchange)
                 exchange.requestMethod == "GET" && path == "/admin" -> respondHtml(exchange, ADMIN_PAGE)
                 exchange.requestMethod == "GET" && path == "/auth/google" -> beginGoogleLogin(exchange)
@@ -533,6 +543,13 @@ private fun loadDotEnv(): DotEnvConfig {
     return DotEnvConfig(discovered.toAbsolutePath().normalize(), values)
 }
 
+/** Loopback, RFC 1918, link-local or IPv6 unique-local peer — e.g. a reverse proxy on the same host or Docker network. */
+private fun fromPrivateNetwork(exchange: HttpExchange): Boolean {
+    val address = exchange.remoteAddress.address
+    return address.isLoopbackAddress || address.isSiteLocalAddress || address.isLinkLocalAddress ||
+        (address is Inet6Address && (address.address[0].toInt() and 0xfe) == 0xfc)
+}
+
 internal fun requestContext(exchange: HttpExchange, details: Map<String, Any?> = emptyMap()) = LogContext(
     device = deviceFingerprint.take(12),
     remote = exchange.remoteAddress.address.hostAddress,
@@ -654,47 +671,98 @@ private data class Multipart(
     val files: MutableMap<String, MutableList<UploadedFile>> = mutableMapOf(),
 )
 
+/**
+ * Streams a multipart/form-data body: file parts go straight to disk and only small text fields
+ * are kept in memory, so a batch of large videos never has to fit into the Java heap.
+ */
 private fun parseMultipart(exchange: HttpExchange): Multipart {
     val contentType = exchange.requestHeaders.getFirst("Content-Type") ?: error("Missing form data")
     val boundary = Regex("boundary=([^;]+)").find(contentType)?.groupValues?.get(1)?.trim('"') ?: error("Invalid form data")
-    val bytes = exchange.requestBody.readBytes()
-    val marker = "--$boundary".toByteArray()
-    val headerMarker = "\r\n\r\n".toByteArray()
+    val input = exchange.requestBody.buffered(64 * 1024)
+    val firstBoundary = DelimiterScanner("--$boundary".toByteArray(StandardCharsets.ISO_8859_1))
+    val partBoundary = DelimiterScanner("\r\n--$boundary".toByteArray(StandardCharsets.ISO_8859_1))
     val result = Multipart()
-    var boundaryStart = indexOf(bytes, marker)
-    require(boundaryStart >= 0) { "Invalid multipart boundary" }
-    while (boundaryStart >= 0) {
-        var partStart = boundaryStart + marker.size
-        if (partStart + 1 < bytes.size && bytes[partStart] == '-'.code.toByte() && bytes[partStart + 1] == '-'.code.toByte()) break
-        if (partStart + 1 < bytes.size && bytes[partStart] == 13.toByte() && bytes[partStart + 1] == 10.toByte()) partStart += 2
-        val nextBoundary = indexOf(bytes, marker, partStart)
-        if (nextBoundary < 0) break
-        var partEnd = nextBoundary
-        if (partEnd >= 2 && bytes[partEnd - 2] == 13.toByte() && bytes[partEnd - 1] == 10.toByte()) partEnd -= 2
-        val headerEnd = indexOf(bytes, headerMarker, partStart)
-        if (headerEnd < 0 || headerEnd >= partEnd) { boundaryStart = nextBoundary; continue }
-        val headers = String(bytes, partStart, headerEnd - partStart, StandardCharsets.UTF_8)
-        val dataStart = headerEnd + headerMarker.size
-        if (dataStart > partEnd) { boundaryStart = nextBoundary; continue }
-        val name = Regex("name=\"([^\"]+)\"").find(headers)?.groupValues?.get(1)
-        if (name == null) { boundaryStart = nextBoundary; continue }
-        val filename = Regex("filename=\"([^\"]*)\"").find(headers)?.groupValues?.get(1)
-        if (filename.isNullOrEmpty()) result.values[name] = String(bytes, dataStart, partEnd - dataStart, StandardCharsets.UTF_8)
-        else {
-            val safeName = File(filename).name
-            val destination = Files.createTempFile(uploadsDirectory(), "${Instant.now().epochSecond}-", "-${safeName.replace(Regex("[^A-Za-z0-9._-]"), "_")}")
-            Files.newOutputStream(destination).use { it.write(bytes, dataStart, partEnd - dataStart) }
-            result.files.getOrPut(name, ::mutableListOf) += UploadedFile(safeName, destination)
+    try {
+        require(firstBoundary.copyTo(input, OutputStream.nullOutputStream())) { "Invalid multipart boundary" }
+        while (true) {
+            val first = input.read()
+            val second = input.read()
+            if (first == '-'.code && second == '-'.code) break
+            require(first == '\r'.code && second == '\n'.code) { "Invalid multipart body" }
+            val headerBytes = LimitedBuffer(16 * 1024)
+            require(headerEnd.copyTo(input, headerBytes)) { "Incomplete multipart body" }
+            val headers = headerBytes.toString(StandardCharsets.UTF_8)
+            val name = Regex("name=\"([^\"]+)\"").find(headers)?.groupValues?.get(1)
+            val filename = Regex("filename=\"([^\"]*)\"").find(headers)?.groupValues?.get(1)
+            if (name != null && !filename.isNullOrEmpty()) {
+                val safeName = File(filename).name
+                val destination = Files.createTempFile(uploadsDirectory(), "${Instant.now().epochSecond}-", "-${safeName.replace(Regex("[^A-Za-z0-9._-]"), "_")}")
+                result.files.getOrPut(name, ::mutableListOf) += UploadedFile(safeName, destination)
+                Files.newOutputStream(destination).buffered(64 * 1024).use { output ->
+                    require(partBoundary.copyTo(input, output)) { "The upload ended before $safeName was complete." }
+                }
+            } else {
+                val value = LimitedBuffer(64 * 1024)
+                require(partBoundary.copyTo(input, value)) { "Incomplete multipart body" }
+                if (name != null) result.values[name] = value.toString(StandardCharsets.UTF_8)
+            }
         }
-        boundaryStart = nextBoundary
+        input.transferTo(OutputStream.nullOutputStream())
+    } catch (error: Exception) {
+        result.files.values.flatten().forEach { Files.deleteIfExists(it.path) }
+        throw error
     }
     return result
 }
 
-private fun indexOf(source: ByteArray, target: ByteArray, from: Int = 0): Int {
-    if (target.isEmpty() || from < 0 || from > source.size - target.size) return -1
-    for (i in from..source.size - target.size) if (target.indices.all { source[i + it] == target[it] }) return i
-    return -1
+private val headerEnd = DelimiterScanner("\r\n\r\n".toByteArray(StandardCharsets.ISO_8859_1))
+
+/** Finds a byte delimiter in a stream (Knuth–Morris–Pratt) while copying everything before it. */
+private class DelimiterScanner(private val delimiter: ByteArray) {
+    private val fallback = IntArray(delimiter.size).also { table ->
+        var length = 0
+        for (i in 1 until delimiter.size) {
+            while (length > 0 && delimiter[i] != delimiter[length]) length = table[length - 1]
+            if (delimiter[i] == delimiter[length]) length++
+            table[i] = length
+        }
+    }
+
+    /** Copies [input] to [output] up to the next delimiter, which is consumed; false if the input ended first. */
+    fun copyTo(input: InputStream, output: OutputStream): Boolean {
+        var matched = 0
+        while (true) {
+            val next = input.read()
+            if (next < 0) {
+                output.write(delimiter, 0, matched)
+                return false
+            }
+            val byte = next.toByte()
+            while (matched > 0 && delimiter[matched] != byte) {
+                val kept = fallback[matched - 1]
+                output.write(delimiter, 0, matched - kept)
+                matched = kept
+            }
+            if (delimiter[matched] == byte) {
+                if (++matched == delimiter.size) return true
+            } else {
+                output.write(next)
+            }
+        }
+    }
+}
+
+/** In-memory sink for multipart headers and text fields that refuses to grow past [limit] bytes. */
+private class LimitedBuffer(private val limit: Int) : ByteArrayOutputStream() {
+    override fun write(b: Int) {
+        check(count < limit) { "A form field is too large." }
+        super.write(b)
+    }
+
+    override fun write(b: ByteArray, off: Int, len: Int) {
+        check(count + len <= limit) { "A form field is too large." }
+        super.write(b, off, len)
+    }
 }
 internal fun String.extension() = substringAfterLast('.', "").lowercase()
 private fun String?.orDefault(default: String) = this?.takeIf { it.isNotBlank() } ?: default

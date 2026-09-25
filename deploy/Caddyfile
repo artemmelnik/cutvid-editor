@@ -1,0 +1,25 @@
+# HTTPS entry point. Caddy obtains and renews the Let's Encrypt certificate itself.
+# The site address and limits come from /opt/jamal/.env (see env.example).
+{$JAMAL_DOMAIN} {
+	# The app's admin dashboard has no login of its own, so Caddy asks for one.
+	# Set it with /opt/jamal/set-admin-password.sh; until then admin-auth/locked.caddy answers 404.
+	@admin path /admin /admin/* /api/admin/*
+	handle @admin {
+		import /etc/caddy/admin-auth/*.caddy
+		reverse_proxy jamal:8787
+	}
+
+	# One upload request: a quick-render batch or a single project video. Uploads stream to disk.
+	request_body {
+		max_size {$JAMAL_UPLOAD_LIMIT:2GB}
+	}
+
+	handle {
+		reverse_proxy jamal:8787
+	}
+}
+
+# Requests to the bare server IP go to the HTTPS address.
+http://{$JAMAL_SERVER_IP:127.0.0.1} {
+	redir https://{$JAMAL_DOMAIN}{uri}
+}

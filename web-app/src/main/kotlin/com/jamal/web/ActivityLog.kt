@@ -111,7 +111,8 @@ object ActivityLog {
         }
     }
 
-    private fun logDirectory(): Path = Path.of(System.getProperty("user.home"), ".jamal", "logs").also(Files::createDirectories)
+    // Next to jobs and uploads, so a Docker deployment keeps the log in its data volume.
+    private fun logDirectory(): Path = jamalDirectory().resolve("logs").also(Files::createDirectories)
 }
 
 data class LogContext(

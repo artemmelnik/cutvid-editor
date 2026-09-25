@@ -132,8 +132,12 @@ Open http://127.0.0.1:8787. Videos are uploaded only to this machine. Completed 
 
 The production image builds the web app and native renderer together, includes
 the ONNX-simplified MODNet model with its fixed `1×3×1024×576` input, and writes
-all user uploads, render history, sessions, and exports to a persistent Docker
-volume. The image verifies the model checksum during its build.
+all user uploads, render history, sessions, exports and the activity log to a
+persistent Docker volume. The image verifies the model checksum during its build.
+
+For a public server use [`deploy/`](deploy/README.md): it runs the app behind
+Caddy with automatic HTTPS and a password-protected admin dashboard. The steps
+below start the bare container, which is enough for a local or test setup.
 
 1. Copy `.env.example` to `.env` and set `GOOGLE_OAUTH_CLIENT_ID`,
    `GOOGLE_OAUTH_CLIENT_SECRET`, and `JAMAL_PUBLIC_URL`.
@@ -184,18 +188,22 @@ variables and JVM system properties override values loaded from `.env`.
 ### Admin activity dashboard
 
 Open [http://127.0.0.1:8787/admin](http://127.0.0.1:8787/admin). The dashboard
-is unlocked and shows every persisted render job, its Google-account owner,
-state, progress, and status message. It refreshes every two seconds.
-It also provides a download of the current structured log.
+shows every persisted render job, its Google-account owner, state, progress,
+and status message. It refreshes every two seconds and also provides a
+download of the current structured log.
 
-Admin tokens may contain Unicode characters. The dashboard encodes the token
-as UTF-8/Base64 before placing it in the authenticated request header; the
-token itself is never persisted or logged by the server.
+The dashboard has no login of its own. It only answers requests from this
+machine or its private network (loopback, RFC 1918, link-local and IPv6
+unique-local addresses), such as a reverse proxy on the same host or Docker
+network; requests from public addresses get `403`. A public deployment must
+therefore put the proxy's authentication in front of it — `deploy/` does this
+with Caddy.
 
-Activity is stored as newline-delimited JSON under `~/.jamal/logs`, rotated
-daily and retained for 30 days. Logs include uploads, render pipeline changes,
-render-engine output, progress, failures with stack traces, downloads,
-admin authentication failures, and relevant HTTP requests. Tokens and raw MAC
+Activity is stored as newline-delimited JSON under `logs/` in the data
+directory (`JAMAL_DATA_DIR`, by default `~/.jamal`), rotated daily and retained
+for 30 days. Logs include uploads, render pipeline changes, render-engine
+output, progress, failures with stack traces, downloads, refused admin
+requests, and relevant HTTP requests. Tokens and raw MAC
 addresses are never logged; sensitive detail keys are automatically redacted.
 
 To use a different shared folder, such as Dropbox, set `jamal.exports.dir` when starting the app:

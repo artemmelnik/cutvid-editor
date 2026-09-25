@@ -1,0 +1,2 @@
+# Keeps the admin dashboard closed until set-admin-password.sh replaces this file with basic.caddy.
+respond 404
