@@ -11,9 +11,20 @@ The local web UI provides two multi-video inputs:
 
 Files are paired in selection order. Select the same number on each side for
 one-to-one pairing, or select one file on either side to reuse it for all files
-on the other side. A submission may create up to five outputs; all five begin
-rendering in parallel. The page shows upload progress, render stage, elapsed
-time, estimated remaining time, and a separate progress bar for every output.
+on the other side. A submission may create up to five outputs. The page shows
+upload progress, render stage, queue position, elapsed time, estimated remaining
+time, and a separate progress bar for every output.
+
+### Render queue
+
+All renders — from every user and project — share one queue. By default five
+render at the same time and the rest wait their turn in submission order. Set
+`JAMAL_PARALLEL_RENDERS` in `.env` (or the environment) to change this, for
+example `JAMAL_PARALLEL_RENDERS=1` to render strictly one video after another,
+then restart the app. Each render already uses several CPU cores, so on a small
+server fewer parallel renders are often just as fast. Google Drive uploads run
+separately, two at a time, and do not take a render slot. Renders still queued
+or running when the app restarts are marked as failed and must be started again.
 
 `Render video` creates a local render job and invokes the C++ engine. The engine isolates the dominant person, applies a configurable outline, composites it over the background, loops a shorter background when needed, and preserves the reference video's audio.
 
@@ -37,8 +48,8 @@ time, estimated remaining time, and a separate progress bar for every output.
 Each generated video takes a random reference video and a random background
 video. Every video in a folder is used once before any of them repeats, and a
 reference/background pair is not repeated while unused pairs remain. The
-chosen files and values are shown on every render in *My renders*. Up to five
-renders run at a time; the rest wait in the queue.
+chosen files and values are shown on every render in *My renders*. The videos
+join the shared render queue described above.
 
 ## Saving to Google Drive
 
