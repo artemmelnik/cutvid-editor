@@ -51,6 +51,48 @@ reference/background pair is not repeated while unused pairs remain. The
 chosen files and values are shown on every render in *My renders*. The videos
 join the shared render queue described above.
 
+Finished project videos are saved in the project's own folder inside the
+exports folder, named `<project> <date time> <id>.mp4` (the same name is used on
+Google Drive):
+
+```
+Exports/
+  Autumn campaign/
+    Autumn campaign 2026-09-26 14.03 1ef17fb3.mp4
+  Summer promo/
+    …
+  jamal-1790333778072-7a88911b.mp4   ← quick renders stay at the top level
+```
+
+The folder name comes from the project name when the project is created and is
+kept when the project is renamed. Characters that are unsafe in file names become
+`_`, and a second project with the same name gets a folder such as
+`Summer promo (2)`. Deleting a project keeps its folder and finished videos.
+Times in file names use the server's time zone — UTC in Docker unless `TZ` is
+set (for example `TZ=Europe/Moscow` in `.env`).
+
+## ChatGPT access (MCP)
+
+The app includes an MCP server, so ChatGPT (or another MCP client) can list a
+user's projects and finished videos and download them. All of its tools only
+read: `list_projects`, `list_videos`, `search` and `fetch`. Videos are handed out
+as download links that expire after 24 hours; ChatGPT can ask for fresh ones.
+
+1. Set `JAMAL_PUBLIC_URL` to the server's public HTTPS address. ChatGPT only
+   connects to public HTTPS servers, and the download links use this address.
+2. On the page choose **Create ChatGPT link** and copy the link. It is shown only
+   once; only a hash of it is stored.
+3. In ChatGPT (web, a plan with Developer mode, such as Plus, Pro, Business or
+   Enterprise), turn on **Developer mode** in the Apps/Connectors settings, add a
+   new app with the link as its MCP server URL, and choose
+   **No authentication**. (Menu names in ChatGPT change from time to time.)
+
+The link itself is the password: anyone who has it can list and download that
+user's finished videos, and only that user's. **New link** replaces it and
+**Turn off** disables it; download links already handed out keep working until
+they expire. Keep the link out of places that log URLs, such as proxy access logs. Other MCP clients can instead call `/mcp` with the
+header `Authorization: Bearer <the part of the link after /mcp/>`.
+
 ## Saving to Google Drive
 
 A project with a Google Drive folder link uploads each finished video into that
@@ -84,7 +126,7 @@ cmake --build render-engine/build
 ./gradlew :web-app:run
 ```
 
-Open http://127.0.0.1:8787. Videos are uploaded only to this machine. Completed exports are saved to `OneDrive-Personal/Jamal Video Compositor/Exports` (and offered as browser downloads); temporary uploads remain local in `~/.jamal`.
+Open http://127.0.0.1:8787. Videos are uploaded only to this machine. Completed exports are saved to `OneDrive-Personal/Jamal Video Compositor/Exports`, or `~/.jamal/exports` without OneDrive, with one subfolder per project (and offered as browser downloads); temporary uploads remain local in `~/.jamal`. In Docker, exports are in `/data/exports` on the `jamal-data` volume.
 
 ## Docker deployment
 

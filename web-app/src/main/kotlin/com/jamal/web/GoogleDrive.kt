@@ -13,9 +13,6 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 import java.util.Base64
 import java.util.Properties
 import java.util.concurrent.ConcurrentHashMap
@@ -49,7 +46,6 @@ private val uploadWorkerNumber = AtomicInteger()
 private val uploadQueue = Executors.newFixedThreadPool(PARALLEL_UPLOADS) { task ->
     Thread(task, "jamal-drive-${uploadWorkerNumber.incrementAndGet()}").apply { isDaemon = true }
 }
-private val driveNameTime = DateTimeFormatter.ofPattern("yyyy-MM-dd HH.mm").withZone(ZoneId.systemDefault())
 
 internal fun driveAvailable(user: SignedInUser) = googleOauthConfigured() && !user.id.startsWith("local-")
 internal fun driveConnected(user: SignedInUser) = driveConnection(user) != null
@@ -286,8 +282,7 @@ private fun finishUpload(job: RenderJob, response: HttpResponse<String>): String
     return jsonString(response.body(), "webViewLink")?.takeIf { it.startsWith("https://") }
 }
 
-private fun driveFileName(job: RenderJob) =
-    "${job.projectName ?: "Jamal"} ${driveNameTime.format(Instant.ofEpochMilli(job.queuedAt))} ${job.id.take(8)}.mp4"
+private fun driveFileName(job: RenderJob) = job.output.fileName.toString()
 
 /** Sends a Drive API request, refreshing the access token once if Google no longer accepts it. */
 private fun driveSend(user: SignedInUser, request: (String) -> HttpRequest): HttpResponse<String> {
