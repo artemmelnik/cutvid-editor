@@ -1,0 +1,46 @@
+# Production stack: Jamal behind Caddy (HTTPS, password-protected admin dashboard).
+# Server layout: the files of this folder in /opt/jamal, the repository in /opt/jamal/src.
+# Deploy or update: cd /opt/jamal && docker compose up -d --build
+name: jamal
+
+services:
+  jamal:
+    build: ./src
+    image: jamal-video-compositor:local
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      JAMAL_BIND_HOST: 0.0.0.0
+      JAMAL_DATA_DIR: /data
+      JAMAL_EXPORTS_DIR: /data/exports
+    ports:
+      # Only the server itself (e.g. an SSH tunnel) reaches the app directly; the public entry is Caddy.
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - jamal-data:/data
+    # Keeps parallel renders from starving SSH, Docker and Caddy of memory.
+    mem_limit: ${JAMAL_MEM_LIMIT:-6500m}
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - jamal
+    environment:
+      JAMAL_DOMAIN: ${JAMAL_DOMAIN:?Set JAMAL_DOMAIN in .env}
+      JAMAL_SERVER_IP: ${JAMAL_SERVER_IP:-127.0.0.1}
+      JAMAL_UPLOAD_LIMIT: ${JAMAL_UPLOAD_LIMIT:-2GB}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./admin-auth:/etc/caddy/admin-auth:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  jamal-data:
+  caddy-data:
+  caddy-config:

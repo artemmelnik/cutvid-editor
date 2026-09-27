@@ -1,1 +1,15 @@
+# Local secrets and machine-specific files
+.env
+.DS_Store
+.idea/
+.gradle/
+
+# Build output (the Docker image builds everything itself)
+build/
+**/build/
+
+# Local development fallback model
 models/u2net_human_seg.onnx
+
+# Admin password hash written on the server by deploy/set-admin-password.sh
+deploy/admin-auth/basic.caddy

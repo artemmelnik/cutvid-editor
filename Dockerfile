@@ -27,7 +27,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 WORKDIR /app
 COPY --from=build /src/web-app/build/install/web-app /app/web-app
 COPY --from=build /src/render-engine/build/jamal-render-engine /app/render-engine/build/jamal-render-engine
-ARG MODNET_SHA256=5069a5e306b9f5e9f4f2b0360264c9f8ea13b257c7c39943c7cf6a2ec3a102ae
+ARG MODNET_SHA256=2211fbc6d42665736b6c2834943efcabb57c755042bebd258e0021ea59374186
 COPY models/modnet_photographic.onnx /app/models/modnet_photographic.onnx
 COPY docker/start.sh /app/start.sh
 

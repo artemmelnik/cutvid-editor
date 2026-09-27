@@ -1,10 +1,19 @@
 # Local segmentation models
 
-Model binaries are downloaded locally and are intentionally excluded from Git.
+The production engine uses `modnet_photographic.onnx`, which is committed so
+Docker builds are reproducible. `u2net_human_seg.onnx` is only a local
+development fallback and stays out of Git.
 
-The production engine uses `modnet_photographic.onnx`. It is an ONNX-simplified
-MODNet model with a fixed `input` shape of `1×3×1024×576`, which is compatible
-with OpenCV 4.10. Docker verifies the expected SHA-256 during image creation so
-the production image cannot silently use an older model.
+`modnet_photographic.onnx` is an ONNX-simplified MODNet model with a fixed
+`input` shape of `1×3×1024×576` (the engine always feeds 576×1024 frames).
+The PyTorch export has a dynamic `[batch_size, 3, height, width]` input, which
+OpenCV 4.10 (the version in the Docker image) cannot import: it fails at
+`/hr_branch/Concat_1` with "Inconsistent shape for ConcatLayer". To regenerate
+the fixed model from such an export, run:
 
-`u2net_human_seg.onnx` remains only as a local fallback for development.
+```sh
+scripts/fix-modnet-shape.sh path/to/dynamic-export.onnx models/modnet_photographic.onnx
+```
+
+Docker verifies the model's SHA-256 (`MODNET_SHA256` in the Dockerfile) during
+image creation, so update that value whenever the model changes.

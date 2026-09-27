@@ -21,6 +21,7 @@ import kotlin.random.Random
  */
 
 private const val MAX_PROJECT_OUTPUTS = 100
+private const val MAX_FORM_BYTES = 64 * 1024
 private val projectPools = listOf("reference", "background")
 internal val projects = ConcurrentHashMap<String, Project>()
 
@@ -190,7 +191,12 @@ private fun requireIdle(project: Project, action: String) = require(
     jobs.values.none { it.projectId == project.id && (it.state == JobState.QUEUED || it.state == JobState.RENDERING) },
 ) { "Wait for this project's renders to finish before $action." }
 
-private fun formFields(exchange: HttpExchange) = queryValues(String(exchange.requestBody.readAllBytes(), StandardCharsets.UTF_8))
+/** Project forms are small URL-encoded bodies; a larger one is refused instead of being read into memory. */
+private fun formFields(exchange: HttpExchange): Map<String, String> {
+    val body = exchange.requestBody.readNBytes(MAX_FORM_BYTES + 1)
+    require(body.size <= MAX_FORM_BYTES) { "The form is too large." }
+    return queryValues(String(body, StandardCharsets.UTF_8))
+}
 private fun poolName(value: String?) = value?.takeIf { it in projectPools } ?: throw IllegalArgumentException("Unknown video folder.")
 private fun cleanName(value: String) = value.replace(Regex("\\p{Cntrl}"), " ").replace(Regex("\\s+"), " ").trim()
 private fun projectName(fields: Map<String, String>) = cleanName(fields["name"].orEmpty()).take(80).also { require(it.isNotEmpty()) { "Give the project a name." } }
