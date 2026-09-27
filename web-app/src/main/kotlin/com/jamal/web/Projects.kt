@@ -2,6 +2,7 @@ package com.jamal.web
 
 import com.sun.net.httpserver.HttpExchange
 import java.io.File
+import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
@@ -49,6 +50,8 @@ internal class Project(
 ) {
     val references = CopyOnWriteArrayList<UploadedFile>()
     val backgrounds = CopyOnWriteArrayList<UploadedFile>()
+    /** Subfolder of the exports folder that receives this project's renders; see [projectExportFolder]. */
+    @Volatile var exportFolder: String? = null
     fun pool(name: String): MutableList<UploadedFile> = if (name == "reference") references else backgrounds
 }
 
@@ -66,7 +69,7 @@ internal fun createProject(exchange: HttpExchange) {
         val fields = formFields(exchange)
         val project = Project(UUID.randomUUID().toString(), user, System.currentTimeMillis(), projectName(fields), projectSettings(fields, user, null))
         projects[project.id] = project
-        persistProject(project)
+        projectExportFolder(project)
         ActivityLog.info("project.created", "Project created", requestContext(exchange, mapOf("project" to project.name, "owner" to user.email)))
         respondJson(exchange, 201, "{\"project\":${projectJson(project)}}")
     }
@@ -271,7 +274,32 @@ private class ShuffleBag<T>(private val items: List<T>, private val random: Rand
 private fun projectJson(project: Project): String {
     val settings = project.settings
     fun names(pool: List<UploadedFile>) = pool.joinToString(",", "[", "]") { "\"${it.name.jsonEscape()}\"" }
-    return """{"id":"${project.id}","name":"${project.name.jsonEscape()}","createdAt":${project.createdAt},"count":${settings.outputCount},"outlineMin":${settings.outlinePixels.min},"outlineMax":${settings.outlinePixels.max},"scaleMin":${settings.scalePercent.min},"scaleMax":${settings.scalePercent.max},"leftMin":${settings.horizontalPercent.min},"leftMax":${settings.horizontalPercent.max},"bottomMin":${settings.bottomPercent.min},"bottomMax":${settings.bottomPercent.max},"colorFrom":"${settings.outlineColorFrom}","colorTo":"${settings.outlineColorTo}","driveFolderId":${settings.driveFolderId.jsonOrNull()},"driveFolderName":${settings.driveFolderName.jsonOrNull()},"driveLink":${settings.driveFolderId?.let(::driveFolderLink).jsonOrNull()},"references":${names(project.references)},"backgrounds":${names(project.backgrounds)}}"""
+    return """{"id":"${project.id}","name":"${project.name.jsonEscape()}","createdAt":${project.createdAt},"count":${settings.outputCount},"outlineMin":${settings.outlinePixels.min},"outlineMax":${settings.outlinePixels.max},"scaleMin":${settings.scalePercent.min},"scaleMax":${settings.scalePercent.max},"leftMin":${settings.horizontalPercent.min},"leftMax":${settings.horizontalPercent.max},"bottomMin":${settings.bottomPercent.min},"bottomMax":${settings.bottomPercent.max},"colorFrom":"${settings.outlineColorFrom}","colorTo":"${settings.outlineColorTo}","driveFolderId":${settings.driveFolderId.jsonOrNull()},"driveFolderName":${settings.driveFolderName.jsonOrNull()},"driveLink":${settings.driveFolderId?.let(::driveFolderLink).jsonOrNull()},"exportFolder":${project.exportFolder.jsonOrNull()},"references":${names(project.references)},"backgrounds":${names(project.backgrounds)}}"""
+}
+
+/**
+ * The project's own folder inside the exports folder. It is chosen once, from the project name, and kept when the
+ * project is renamed so a project's videos never end up split across folders. Names are made unique across
+ * projects (ignoring case, for case-insensitive disks) and limited to characters every disk and the renderer accept.
+ */
+@Synchronized internal fun projectExportFolder(project: Project): String {
+    project.exportFolder?.let { return it }
+    val taken = projects.values.filter { it !== project }.mapNotNull { it.exportFolder?.lowercase() }.toSet()
+    val base = safeFileName(project.name)
+    val folder = (sequenceOf(base) + generateSequence(2) { it + 1 }.map { "$base ($it)" }).first { it.lowercase() !in taken }
+    project.exportFolder = folder
+    persistProject(project)
+    return folder
+}
+
+/**
+ * Letters (any alphabet), digits, spaces and `._()-` only: no path separators, quotes or `%` patterns. Characters
+ * the JVM cannot write in file names (a server started without a UTF-8 locale) become `_` as well.
+ */
+internal fun safeFileName(value: String): String {
+    val fileNames = Charset.forName(System.getProperty("sun.jnu.encoding") ?: "UTF-8").newEncoder()
+    return value.replace(Regex("[^\\p{L}\\p{M}\\p{N} ._()-]"), "_").map { if (fileNames.canEncode(it)) it else '_' }.joinToString("")
+        .replace(Regex("\\s+"), " ").trim(' ', '.').take(80).trimEnd(' ', '.').ifEmpty { "Project" }
 }
 
 private fun projectsDirectory(): Path = jamalDirectory().resolve("projects").also(Files::createDirectories)
@@ -292,6 +320,7 @@ private fun projectDirectory(id: String): Path = projectsDirectory().resolve(id)
         values["colorFrom"] = outlineColorFrom; values["colorTo"] = outlineColorTo
         values["driveFolderId"] = driveFolderId.orEmpty(); values["driveFolderName"] = driveFolderName.orEmpty()
     }
+    values["exportFolder"] = project.exportFolder.orEmpty()
     for (pool in projectPools) project.pool(pool).forEach { values["video.$pool.${it.path.fileName}"] = it.name }
     val directory = projectDirectory(project.id).also(Files::createDirectories)
     val target = directory.resolve("project.properties")
@@ -323,6 +352,7 @@ internal fun loadPersistedProjects() {
             )
             val owner = SignedInUser(values.getProperty("ownerId") ?: return@forEach, values.getProperty("ownerEmail").orEmpty())
             val project = Project(id, owner, values.getProperty("createdAt")?.toLongOrNull() ?: 0L, values.getProperty("name", "Project"), settings)
+            project.exportFolder = values.getProperty("exportFolder")?.ifBlank { null }
             for (pool in projectPools) {
                 project.pool(pool) += values.stringPropertyNames()
                     .filter { it.startsWith("video.$pool.") }
@@ -339,4 +369,6 @@ internal fun loadPersistedProjects() {
             ActivityLog.warn("projects.restore_failed", "Could not restore project ${directory.fileName}: ${error.message}")
         }
     } }
+    // Projects created before export folders existed get theirs now, oldest first.
+    projects.values.sortedBy { it.createdAt }.forEach { projectExportFolder(it) }
 }

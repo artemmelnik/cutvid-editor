@@ -37,7 +37,9 @@ RUN chmod +x /app/start.sh /app/render-engine/build/jamal-render-engine \
     && chown -R jamal:jamal /app /data
 
 USER jamal
-ENV JAMAL_BIND_HOST=0.0.0.0 \
+# UTF-8 file names, so project folders keep Cyrillic and other non-Latin names.
+ENV LANG=C.UTF-8 \
+    JAMAL_BIND_HOST=0.0.0.0 \
     JAMAL_DATA_DIR=/data \
     JAMAL_EXPORTS_DIR=/data/exports \
     JAVA_OPTS="-Djamal.exports.dir=/data/exports"
