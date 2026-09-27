@@ -48,6 +48,15 @@ ssh -N -L 8787:127.0.0.1:8787 root@<server>   # then open http://localhost:8787/
 The app refuses admin requests that come from a public address, so the
 dashboard stays closed even if port 8787 is ever exposed directly.
 
+## ChatGPT access (MCP)
+
+Works through Caddy as is: `/mcp/…` and the signed `/files/…` download links
+are proxied like the rest of the site, and `JAMAL_PUBLIC_URL` provides the
+address the links point to. Each user creates their link on the site with
+**Create ChatGPT link** (see the main README). The link carries its secret in
+the URL and the app never logs it; Caddy keeps no access log in this setup, so
+if you ever add a `log` directive to the Caddyfile, exclude `/mcp/*` from it.
+
 ## Disk space
 
 Uploads, project videos and exports are never deleted automatically. Check
